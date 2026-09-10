@@ -19,22 +19,30 @@ from .tasks import load
 MAX_TOKENS = {"direct": 16, "filler": 16, "nl_cot": 700, "symbolic": 700}
 
 
+def _shots(items, it, n):
+    """n few-shot demonstrations: the next n items of the same subtype (cyclic), never the item itself."""
+    same = [x for x in items if x["subtype"] == it["subtype"]]
+    i = same.index(it)
+    return (same[i + 1:] + same[:i])[:n]
+
+
 def run(items, conditions, workers, out_dir: Path, k_filler: int, filler_type: str,
-        temperature: float, label: str):
+        temperature: float, label: str, fewshot: int = 0):
     client = LLMClient(Endpoint(label=label), cache_dir="results/cache")
     jobs = [(it, c) for c in conditions for it in items]
     records = []
     t0 = time.time()
 
     def one(it, c):
-        msgs = build_messages(it, c, k_filler=k_filler, filler_type=filler_type)
+        shots = _shots(items, it, fewshot) if fewshot else None
+        msgs = build_messages(it, c, k_filler=k_filler, filler_type=filler_type, fewshot=shots)
         comp = client.chat(msgs, temperature=temperature, max_tokens=MAX_TOKENS[c])
         return {"id": it["id"], "family": it["family"], "subtype": it["subtype"], "condition": c,
-                "k_filler": k_filler if c == "filler" else 0,
+                "k_filler": k_filler if c == "filler" else 0, "fewshot": fewshot,
                 "pred": extract_answer(comp.text, it["answer_type"]), "gold": it["answer"],
                 "correct": is_correct(it, comp.text), "finish": comp.finish_reason,
                 "completion_tokens": comp.completion_tokens, "cached": comp.cached,
-                "text": comp.text}
+                "label": label, "model": comp.raw.get("model"), "text": comp.text}
 
     with ThreadPoolExecutor(workers) as ex:
         futs = [ex.submit(one, it, c) for it, c in jobs]
@@ -61,7 +69,8 @@ def run(items, conditions, workers, out_dir: Path, k_filler: int, filler_type: s
     trunc = {c: sum(r["finish"] == "length" for r in records if r["condition"] == c) for c in conditions}
     noparse = {c: sum(r["pred"] is None for r in records if r["condition"] == c) for c in conditions}
     summary = "\n".join(lines) + f"\n\ntruncated (finish=length): {trunc}\nunparsed answers: {noparse}\n"
-    summary += f"wall-clock: {time.time() - t0:.0f}s; label={label}; k_filler={k_filler}\n"
+    summary += (f"wall-clock: {time.time() - t0:.0f}s; label={label}; k_filler={k_filler}; "
+                f"filler_type={filler_type}; fewshot={fewshot}\n")
     (out_dir / "summary.md").write_text(summary)
     print(summary)
 
@@ -89,6 +98,7 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--label", default="qwen2.5-7b-instruct-q8")
     ap.add_argument("--limit", type=int, default=0, help="items per subtype (0 = all)")
+    ap.add_argument("--fewshot", type=int, default=0, help="same-subtype demonstrations per prompt")
     args = ap.parse_args()
     items = load(args.data)
     if args.limit:
@@ -100,7 +110,7 @@ def main():
                 keep.append(it)
         items = keep
     run(items, args.conditions.split(","), args.workers, Path(args.out), args.k_filler,
-        args.filler_type, args.temperature, args.label)
+        args.filler_type, args.temperature, args.label, fewshot=args.fewshot)
 
 
 if __name__ == "__main__":
