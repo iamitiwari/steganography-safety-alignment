@@ -6,3 +6,4 @@ fillerTokens.pdf
 details.md
 notAllLLMReasoningCoT.pdf
 results/probe/**/*.npy
+notebooks/__marimo__/
