@@ -159,6 +159,27 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
+    ## Findings at a glance
+
+    | # | finding | key number |
+    |---|---|---|
+    | 1 | Filler tokens give this model nothing, at the paper's own settings and on the paper's own task | filler 14–19% vs direct 15%; paper task 0.4% either way |
+    | 2 | Both scratchpads are load-bearing, and the model never checks them | corrupted step followed 94% (English) / 73% (symbolic); 0 of 400 flag it |
+    | 3 | Symbolic notation hides nothing internally | value decodable before it is written: 0.95 / 0.95 (chain), 0.83 / 0.84 (equations) |
+    | 4 | Dots carry the operand but no computation, and are causally inert | probe ≤ 0.13 at any dot; patching the dots: recovery 0.00 |
+    | 5 | A reasoning-distilled model silently overrides its own think trace | follows 40%, yet the think block followed the corruption in 176/192 |
+
+    Inconclusive: the chain product is decodable at R² 0.88 at the answer token while the model's own
+    first digit is right only 46% of the time; a weak long-filler trend at p = 0.10; the ordering
+    subtype at 60%. Each section below gives one runnable taste and the headline table; the full
+    write-ups are in the repo's `docs/`.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
     ## 1. Hours 0-3: dataset and calibration baseline
 
     Seven puzzle subtypes were written so that (a) ground truth and every intermediate are computed
