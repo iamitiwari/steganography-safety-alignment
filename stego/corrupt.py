@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -176,7 +177,22 @@ def classify(pred: str | None, gold: str, cons: str, atype: str) -> str:
 
 
 # --------------------------------------------------------------------------- run
-def run(items, workers, out_dir: Path, temperature: float, label: str, seed: int):
+_BOXED = re.compile(r"\\boxed\{([^{}]*)\}")
+
+
+def extract_answer_think(text: str, answer_type: str):
+    """For reasoning models: read the answer from the text AFTER the think block (or the whole text if
+    the block never closed), accepting 'Answer: X' first and a LaTeX \\boxed{X} as a fallback."""
+    tail = text.split("</think>")[-1] if "</think>" in text else text
+    boxed = _BOXED.findall(tail)
+    if boxed:                       # R1 models box the final value; "Final Answer:" alone carries no number
+        return normalise(boxed[-1], answer_type)
+    pred = extract_answer(tail, answer_type)
+    return pred if pred else None
+
+
+def run(items, workers, out_dir: Path, temperature: float, label: str, seed: int,
+        think: bool = False, max_tokens: int = MAX_TOKENS):
     client = LLMClient(Endpoint(label=label), cache_dir="results/cache")
     rng = random.Random(seed)
     plans = {it["id"]: plan(it, random.Random(f"{seed}-{it['id']}")) for it in items}
@@ -186,16 +202,19 @@ def run(items, workers, out_dir: Path, temperature: float, label: str, seed: int
     def one(it, fmt, var):
         pl = plans[it["id"]]
         prefix = pl[f"{fmt}_{var}"]
-        msgs = build_messages(it, CONDITION[fmt]) + [{"role": "assistant", "content": prefix}]
-        comp = client.chat(msgs, temperature=temperature, max_tokens=MAX_TOKENS,
+        # Reasoning models: the corrupted step goes INSIDE an opened think block, so the model continues
+        # its own reasoning from that step, closes the block, and then answers.
+        content = f"<think>\n{prefix}" if think else prefix
+        msgs = build_messages(it, CONDITION[fmt]) + [{"role": "assistant", "content": content}]
+        comp = client.chat(msgs, temperature=temperature, max_tokens=max_tokens,
                            extra={"extra_body": {"continue_final_message": True,
                                                  "add_generation_prompt": False}})
-        pred = extract_answer(comp.text, it["answer_type"])
+        pred = (extract_answer_think if think else extract_answer)(comp.text, it["answer_type"])
         return {"id": it["id"], "family": it["family"], "subtype": it["subtype"], "fmt": fmt,
                 "variant": var, "target": pl["target"], "clean_val": pl["clean"],
                 "corrupt_val": pl["corrupt"], "gold": it["answer"], "cons": pl["cons"],
                 "pred": pred, "cls": classify(pred, it["answer"], pl["cons"], it["answer_type"]),
-                "finish": comp.finish_reason, "completion_tokens": comp.completion_tokens,
+                "think": think, "finish": comp.finish_reason, "completion_tokens": comp.completion_tokens,
                 "label": label, "model": comp.raw.get("model"), "prefix": prefix, "text": comp.text}
 
     records = []
@@ -268,6 +287,9 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--limit", type=int, default=0, help="items per subtype (0 = all)")
     ap.add_argument("--dry", action="store_true", help="print plans, no model calls")
+    ap.add_argument("--think", action="store_true",
+                    help="reasoning model: put the prefix inside an opened <think> block, read the answer after </think>")
+    ap.add_argument("--max-tokens", type=int, default=MAX_TOKENS)
     args = ap.parse_args()
     items = load(args.data)
     if args.limit:
@@ -281,7 +303,8 @@ def main():
             print("[nl corrupt]", pl["nl_corrupt"])
             print("[sym corrupt]", pl["sym_corrupt"].replace("\n", " | "))
         return
-    run(items, args.workers, Path(args.out), args.temperature, args.label, args.seed)
+    run(items, args.workers, Path(args.out), args.temperature, args.label, args.seed,
+        think=args.think, max_tokens=args.max_tokens)
 
 
 if __name__ == "__main__":

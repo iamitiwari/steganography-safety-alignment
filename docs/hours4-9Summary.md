@@ -47,6 +47,13 @@ Detailed tables, failure inspections and reproduction commands: `docs/hours_0-3.
   Genuine silent corrections are ≈2% in both formats.
 - **The model never flags a corrupted step.** 0 of 400 corrupted continuations contain any
   self-correction language.
+- **Reasoning-distilled model (added 2026-09-11, `docs/hours_4-9.md` §4b).** DeepSeek-R1-Distill-Qwen-7B
+  with the corrupted step inside its think block: follows 40% (English) / 63% (symbolic) vs 94/73 for
+  the instruct model. Not self-correction: the think block follows the corruption in 176/192 cases
+  and notice-words stay at 4/192. Instead the model exits the think block after ~13 words and writes
+  a fresh step-by-step solution in the answer, reverting to the true value where it re-derives
+  (arithmetic families) and copying the think block's wrong conclusion where it does not (cipher).
+  Reasoning shown and answer given diverge silently in half the English cases.
 
 ## Open issues
 

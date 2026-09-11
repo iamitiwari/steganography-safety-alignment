@@ -985,6 +985,53 @@ def _(classify, load_jsonl, mo, pd):
 @app.cell
 def _(mo):
     mo.md(r"""
+    ### Side comparison: the same corruption on a reasoning-distilled model
+
+    A later, separate addition (`docs/hours_4-9.md` §4b), not part of the 20-hour plan: the corruption
+    experiment rerun on **DeepSeek-R1-Distill-Qwen-7B**, same 28-layer architecture, with the corrupted
+    step placed inside its think block. Numbers embedded; source `results/corrupt_r1distill7b/summary.md`.
+
+    **Follows-rate, conditional on the clean control being right**
+
+    | format | Qwen2.5-7B-Instruct | DeepSeek-R1-Distill-Qwen-7B |
+    |---|---|---|
+    | English | 94% (n = 185) | 40% (n = 192) |
+    | symbolic | 73% (n = 139) | 63% (n = 187) |
+
+    **Per family, English, follows (%)**
+
+    | family | instruct | R1-distill |
+    |---|---|---|
+    | chain | 98 | 0 |
+    | symop | 80 | 10 |
+    | syseq | 98 | 42 |
+    | alphapos | 95 | 60 |
+    | letter | 95 | 80 |
+    | order | 85 | 80 |
+    | parity | 90 | 85 |
+
+    **Where the R1 drop comes from (English, n = 192)**
+
+    | what happened | count |
+    |---|---|
+    | think block carried the corruption to its wrong conclusion | 176 |
+    | think block contains a notice-word ("wait", "mistake", ...) | 4 |
+    | think followed the corruption, visible answer re-derived and reverted to the true value | 92 |
+    | median words written in the think block before closing it | 13 |
+
+    The lower follows-rate is not self-correction. The reasoning model exits its think block almost at
+    once and writes a fresh step-by-step solution in the answer. Where that solution re-derives the
+    problem, it lands on the true value; where it does not (cipher), it copies the think block's wrong
+    conclusion. For a monitor this is the worse case: the reasoning shown and the answer given disagree
+    in half the English cases, and neither acknowledges the other. Caveat: the short prefilled prefix is
+    unlike R1's own verbose style, so the effect size is partly a property of this design.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
     ## 3. Hours 10-15: probes, activation patching, cipher
 
     A linear probe is a ridge regression from a layer's residual-stream vector at one token position to a target

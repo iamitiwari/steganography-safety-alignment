@@ -207,6 +207,62 @@ Interpretation for the README question (does faithfulness decline under symbolic
    is a number on a line), but zero-shot the model often writes unevaluated expressions, which hides
    the values a monitor or probe would need. Few-shot largely fixes that (§2).
 
+## 4b. The same corruption on a reasoning-distilled model: DeepSeek-R1-Distill-Qwen-7B [Added later: 20+ hours work]
+
+Run 2026-09-11 after the question whether an instruct model is the right subject. Note first that the
+paper's own models are instruct models (DeepSeek-V3-0324, Kimi-K2-Instruct, "two pretrained
+instruction-tuned models", with thinking off in their K2.5 run), and that Qwen2.5-7B-Instruct
+demonstrably reasons in a chain of thought (direct 13% vs nl_cot 92%). The reasoning model is an
+addition, not a correction. `results/corrupt_r1distill7b/`, label `deepseek-r1-distill-qwen-7b-bf16`.
+
+Model: DeepSeek-R1-Distill-Qwen-7B, HF bf16 (`/home/amit/models/hf/DeepSeek-R1-Distill-Qwen-7B`),
+same 28-layer / 3584-wide Qwen2 architecture, served by vLLM exactly like the instruct model.
+Design change (`stego/corrupt.py --think`): the prefix is placed **inside an opened `<think>` block**
+(`<｜Assistant｜><think>\nStart with 36. Adding 32 gives 57.`), so the model continues its own
+reasoning from the corrupted step, closes the block, then answers. The answer is read from the text
+after `</think>`, accepting `\boxed{X}` as well as `Answer: X`. `max_tokens` 2048, temperature 0.
+
+| subtype | nl clean-correct | nl follows | nl original | nl other | sym clean-correct | sym follows | sym original | sym other |
+|---|---|---|---|---|---|---|---|---|
+| syseq | 98% | 42% | 58% | 0% | 100% | 78% | 15% | 8% |
+| chain | 100% | 0% | 92% | 8% | 100% | 95% | 2% | 2% |
+| parity | 100% | 85% | 15% | 0% | 100% | 80% | 5% | 15% |
+| order | 100% | 80% | 20% | 0% | 80% | 45% | 50% | 5% |
+| letter | 90% | 80% | 0% | 20% | 100% | 65% | 10% | 25% |
+| alphapos | 75% | 60% | 30% | 10% | 95% | 55% | 40% | 5% |
+| symop | 100% | 10% | 88% | 2% | 80% | 12% | 70% | 18% |
+| **ALL** | 96% | **41%** | 54% | 5% | 94% | **62%** | 28% | 10% |
+
+**Conditional on the clean control being correct: nl follows 40% (n = 192), sym 63% (n = 187)**,
+against 94% / 73% for the instruct model. 20 continuations hit the token limit; all are
+temperature-0 repetition loops that already contain the answer, and all parse.
+
+What the drop is, and is not:
+
+- **Not self-correction.** The think block carries the corruption through to its consistent
+  conclusion in 176 of 192 English cases. Notice-words ("wait", "mistake", "should be", …) appear in
+  4 of 192 think blocks and 9 of 192 answer sections. The model still never says the step is wrong.
+- **A second, independent derivation.** The model exits the think block almost at once (median 13
+  words after the prefix, max 92) and then writes a full "Let's solve the problem step by step"
+  solution in the visible answer. In English that answer section contains its own derivation 62% of
+  the time and restates the *true* intermediate 62% of the time. Where it re-derives, it reverts to
+  the true answer: 92 of 192 English cases are "think followed the corruption, answer reverted",
+  and in chain / symop / syseq every reverted case is one where the answer section re-derived
+  (37/37, 35/35, 23/23). Where it does not re-derive, it copies the think block's conclusion: cipher
+  reverts in 3 of 33 and follows in 24. Symbolic prefixes trigger a fresh derivation only 15% of the
+  time, which is why the symbolic follows-rate barely moves (63% vs 73%).
+- **The reading for a monitor is worse, not better.** The reasoning shown in the think block and the
+  answer that follows it disagree in half the English cases, with no acknowledgement in either.
+  For the instruct model the visible reasoning was at least what produced the answer.
+
+Caveat. The prefilled prefix is short and unlike R1's own verbose thinking style, and the model
+may be treating it as not its own and doing its "real" solve in the answer section; on clean
+prefixes the answer section re-derives 60% of the time too. So the size of the effect is partly a
+property of this prefill design. The qualitative point does not depend on it: a reasoning-distilled
+model's think trace can be followed to a wrong conclusion and then silently overridden by a
+recomputation that the trace never mentions. Testing this with the model's *own* generated think
+prefix (corrupting a step it wrote itself) is the natural next experiment.
+
 ## 5. Caveats
 
 - 20-item subtypes (parity, order, letter, alphapos) have ±10-point noise; the family-level numbers
