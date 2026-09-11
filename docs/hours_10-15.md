@@ -95,6 +95,91 @@ digit (`val_`), max over layers; shuffled ≈ 0 throughout:
   (73% vs 94% follows-rate) is therefore not because the values are less available internally; the
   brittleness is in the readout/continuation, not in the representation.
 
+## 2b. Activation patching: the filler region is causally inert; the operand is read from the question by layer 22–24
+
+`stego/patch.py`, `results/patch/{chain,syseq}.summary.md` (per-pair rows in `.jsonl`). Matched pairs
+= item A and its counterfactual twin B (same prompt except the operand, `N` for chain / `x` for
+syseq, hence a different answer); pairs kept only if token layouts are identical and the answers'
+first digits differ (chain 442 pairs, syseq 574). A is run with the output of decoder layer L (or of
+every layer, "all" = transplanting the region's whole computation, the paper's KV-cache transplant)
+replaced at chosen positions, and three things are read at the final position:
+
+- **recovery** = (m_patched − m_A)/(m_B − m_A), m = logit(first digit of B's answer) − logit(first
+  digit of A's answer); 0 = no effect, 1 = output moved fully to B's (pairs with |m_B − m_A| > 0.5)
+- **probe shift** = (probe(x)_patched − probe(x)_clean)/(x_B − x_A), a ridge probe for the operand at
+  the final position, layer 24, fitted on the clean runs (fit R² chain 0.98, syseq 0.61)
+- **KL**(patched ‖ clean A) of the next-token distribution, nats
+
+| source written into A | chain recovery (L0 / L16 / L22 / L24 / all) | chain probe shift | chain KL | syseq recovery (L0 / L16 / L22 / L24 / all) | syseq KL |
+|---|---|---|---|---|---|
+| twin's dots (25 positions) | 0.00 / 0.00 / 0.00 / 0.00 / 0.01 | 0.00 | ≤ 0.011 | 0.01 / 0.00 / 0.01 / 0.00 / 0.01 | ≤ 0.011 |
+| unrelated item's dots | 0.00 everywhere | 0.00 | ≤ 0.013 | 0.01 everywhere | ≤ 0.019 |
+| across-item mean at dots | 0.00 / −0.01 / 0.00 / 0.01 / −0.01 | 0.00 | 0.03–0.66 | 0.08 / 0.03 / 0.04 / 0.02 / 0.05 | 0.06–0.89 |
+| random vectors at dots (norm-matched) | 0.08 / 0.25 / 0.02 / 0.08 / 0.26 | ≤ 0.24 | 0.3–2.2 | −0.01 / 0.31 / 0.19 / 0.09 / 0.21 | 0.1–1.8 |
+| **twin's operand digits in the question** (positive control) | **1.00 / 0.89 / 0.72 / 0.00 / 1.00** | 0.97 → 0.61 → 0.00 | 4.7 → 2.6 → 0.001 | **1.00 / 0.59 / 0.42 / 0.01 / 1.00** | 0.32 → 0.11 → 0.001 |
+
+- **Dots are causally inert.** Swapping in the twin's entire filler region, at any single layer or
+  at all layers, changes nothing the answer position does: recovery 0, probe shift 0, KL ≈ 0.01. An
+  unrelated item's dots are indistinguishable from the twin's. This is the paper's KV-transplant
+  test with the opposite outcome, on a model with no behavioural uplift. It also settles the
+  probe/behaviour gap of §1 for the *dots*: the operand that is decodable at `dot_0` is a copy the
+  answer position never reads.
+- **Mean ablation is benign; random vectors disrupt.** Replacing the dots by their across-item mean
+  leaves recovery at 0 and KL small. Replacing them by norm-matched Gaussian noise perturbs the
+  output (KL up to 2.2 nats) and drags the logit-difference metric toward the middle (recovery up
+  to 0.31, an artefact of the perturbation, not movement toward B). So the README's "patch a random
+  vector" does break downstream computation, but by injecting out-of-distribution keys/values that
+  hijack attention, not by removing information: the same removal done cleanly (mean) is harmless.
+- **The operand is read straight from the question, in a window that closes at layer 22–24.**
+  Patching the twin's operand digits moves the output fully to B's when done at layers 0–8, partly at
+  16–22 (chain 0.89 → 0.72, syseq 0.59 → 0.42), and not at all at layer 24: by then the answer
+  position has already attended to the operand, and the product appears there between layers 20 and
+  24 (§1). The probe-shift column tracks the same window. syseq's KL under the operand patch is small
+  (0.32) because its output distribution is dominated by the ` Answer`/`1` prior either way; the
+  logit-difference still moves fully.
+
+## 2c. Cipher family: the plaintext letter is present before it is written; not at all in one pass
+
+`stego/cipher_probe.py`, `results/probe/cipher/summary.md`. 702 items (every word x shift 1–3 x
+queried position) of the `letter` subtype. Targets are letters, so the probe is scaler → PCA-64 →
+multinomial logistic regression, 5-fold stratified CV accuracy, 26-way. Controls: shuffled labels,
+majority class, and an **input ceiling** = the same classifier on one-hot(cipher letter) +
+one-hot(shift) [+ one-hot(queried position)]: because the word pool is small and English letter
+frequencies are skewed, "pick the likeliest of the three candidate letters" already reaches 77%
+(per letter) / 84% (answer letter). A probe has to beat that to show the modular subtraction was done.
+
+Letter level (3627 letters, majority 14%, ceiling 77%), accuracy at the best layer:
+
+| token | symbolic | English |
+|---|---|---|
+| the ciphertext letter (` U`), before the arrow | 98% (L16; 95% already at L4) | 99% (L16) |
+| the arrow (`->`), plaintext not yet written | **100%** (L24) | **100%** (L24) |
+| the plaintext letter itself (sanity) | 100% (L0) | 100% (L0) |
+
+Answer letter (702 items, majority 15%, ceiling 84%):
+
+| position | symbolic | English | filler (best of dots/final) | direct (final) |
+|---|---|---|---|---|
+| token before the answer letter (`=` / `'`) | 91% (L28; 67% L20, 88% L24) | **99%** (L28; 85% L20) | — | — |
+| token before / at the decoded word | 34% / 40% | 34% / 43% | — | — |
+| dots / final | — | — | 18% / 21% | 19% |
+
+- **README angle 2, answered: yes.** In a scratchpad the plaintext letter is fully decodable at the
+  arrow, before the model emits it, and already at the ciphertext letter's own token by layer 4:
+  the shift-back is a cheap lookup done as soon as the letter and the shift are both in context.
+  Well above the 77% frequency-prior ceiling, so it is computed, not guessed.
+- **Formats identical for the decode, English slightly ahead for the indexing.** Letter-level
+  numbers match to the point. Picking the queried letter out of the decoded word resolves late
+  (L20–28) and is the one place symbolic lags: 91% vs 99% at the token before the answer. That
+  matches the behavioural gap on cipher (Hours 4–9: symbolic 95–100% vs English 85–90% with
+  demos, but zero-shot symbolic wrote `ord()`/`chr()` pseudo-code it never evaluated).
+- **In one forward pass nothing is decoded.** With no scratchpad the answer letter is at 15–21% at
+  every dot and at the final token: barely the majority class, far below the 84% a linear prior
+  could reach. A plausible reason is tokenization: in the question the ciphertext is one token
+  (`ULYHU`), so the model would first have to split it into letters; the scratchpad hands it one
+  letter per token. This is the cleanest case in the project of "CoT necessary because the
+  surface form hides the operands", and the dots do not help with it.
+
 ## 3. Controls
 
 - Shuffled labels: −0.03 to +0.01 in every cell of every table.
@@ -108,12 +193,15 @@ digit (`val_`), max over layers; shuffled ≈ 0 throughout:
 
 ## 4. Caveats
 
-- Two families only (syseq, chain); parity/order/cipher/symop not probed.
+- Numeric probes on syseq and chain, letter probes on cipher; parity/order/symop not probed.
 - Layers at stride 2 and dots at stride 6; "max over layers" is optimistic by a few hundredths.
 - Teacher-forced canonical scratchpads, not the model's own generations. The planned probe on the
   model's zero-shot symbolic outputs where it wrote an *unevaluated* expression (`x = 12 + 19`) is
   not done; it is the most direct test of "legible plan, hidden value".
-- Counterfactual-twin activation patching (plan step 4) not done.
+- Patching (§2b) uses the first-digit logit difference as its behavioural metric because the model's
+  exact answers are almost all wrong; pairs whose twins share a first digit are dropped, and pairs
+  with |m_B − m_A| ≤ 0.5 are excluded from the recovery mean. Single-layer patches replace one
+  layer's output at the dot positions and let it propagate; "all" replaces every layer's output.
 - In the filler condition the `final` token is the assistant header; the model's top token there
   is often ` Answer` (it wants to write the label first), so it is not exactly the emit position.
   The direct condition, where it is, gives the same probe numbers.
