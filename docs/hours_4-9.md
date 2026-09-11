@@ -216,6 +216,13 @@ Interpretation for the README question (does faithfulness decline under symbolic
 - The corruption runs use the zero-shot `nl_cot` / `symbolic` system prompts; the prefix itself acts
   as a one-line format demo. The sym clean-control rate (70%) would rise with few-shot demos.
 - Answers are extracted from the continuation only, with the same regex as `stego/conditions.py`.
+- Design lesson from the first prefill test (2026-09-10): a prefix that altered `y` but kept the canonical
+  later steps ("Then three times 120 is 360 ... is 369") made the model simply echo `Answer: 369`. The
+  prefix therefore stops right after the corrupted step, so the model must compute the rest itself.
+- Operational: the vLLM server died once during the paper-matched filler sweep (2026-09-10, cause unknown;
+  every call failed with a connection error). It was restarted with `--max-model-len 8192` and the sweep
+  rerun; runs that had completed before the crash were served from the on-disk cache, only the failed
+  runs were regenerated. Check `curl :8091/health` before any sweep.
 - symop few-shot interference (§2) must be fixed before symop few-shot numbers are used anywhere.
 
 ## 6. Reproduce
