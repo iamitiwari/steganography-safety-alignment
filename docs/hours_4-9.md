@@ -12,7 +12,7 @@ is no nvcc on the box and FlashInfer's sampler JIT-compiles):
 
 ```
 CUDA_VISIBLE_DEVICES=0 VLLM_USE_FLASHINFER_SAMPLER=0 vllm serve /home/amit/models/hf/Qwen2.5-7B-Instruct \
-  --port 8091 --dtype bfloat16 --served-model-name local --max-model-len 4096 --max-num-seqs 256
+  --port 8091 --dtype bfloat16 --served-model-name local --max-model-len 8192 --max-num-seqs 256
 ```
 
 The full 400-completion smoke sweep takes 7–9 s (128 workers) instead of 21 min. bf16 ≠ Q8, so the
@@ -94,6 +94,54 @@ No uplift at any setting, per subtype or overall. This is README idea #1 answere
 **no behavioural filler effect**, consistent with the paper's report that the effect is not universal.
 The sharper question for Hours 10–15 is whether intermediates are nevertheless *encoded* at filler
 positions (computed but never read out).
+
+### 3b. Does our filler match the paper's? Yes — checked against their released code
+
+`stego/conditions.py` was written from the paper's Appendix A, and I re-checked it against the cloned
+repo (`/home/amit/filler-token-reasoning`: `scripts/prompt_utils.py`,
+`scripts/data/generate_1hop_dataset.py`, `scripts/data/generate_varbind_dataset.py`). Both put the
+filler **in the user turn, after the question and before `Answer:`**, with a system prompt that says
+answer immediately and announces the filler; the no-filler baseline drops the `Filler:` line entirely
+(= our `direct`). Remaining cosmetic differences: they use 5 fixed held-out few-shot examples (we
+rotate 5 same-subtype items), blank lines around `Filler:`, bare-number assistant turns, and their
+system prompt does not state the count ("some filler tokens … to give you extra space to process the
+problem"). Their models are DeepSeek V3 (671B MoE) and Kimi K2 (1T MoE), 4-bit.
+
+Paper-matched sweep on our 200 items: 5-shot, three filler types, five lengths
+(`results/fillersweep/fs5_<type>_k<k>/`). Direct (5-shot) is 15% in every row.
+
+| k | dots | counting | alphabet |
+|---|---|---|---|
+| 10 | 14% | 14% | 14% |
+| 25 | 14% | 15% | 14% |
+| 50 | 16% | 16% | 16% |
+| 100 | 16% | 19% | 17% |
+| 250 | 16% | 16% | 18% |
+
+Per-item McNemar vs direct: no condition significant. Best is counting_100 (13 wrong→right vs 5
+right→wrong, p = 0.10), then alphabet_250 (11 vs 4, p = 0.12); the flipping items differ across
+conditions. Chain's 12% at long fillers is 5 vs 1 of 40 (p = 0.38). A weak long-filler trend is
+possible; a 1000-item chain/parity run (seconds on the GPU) would settle it.
+
+### 3c. The paper's own task, prompt and few-shot pool on our model
+
+`scripts/paper_varbind_replication.py` imports their `build_prompt_messages_varbind` and runs their
+easy system-of-equations dataset (500 items, coefficients {2}, constants 1–30, their first 5 few-shot
+examples) across their condition ladder. Only the model differs.
+Output: `results/paper_varbind_easy_qwen2.5-7b-instruct-bf16/`.
+
+| condition | accuracy | Δ | wrong→right | right→wrong |
+|---|---|---|---|---|
+| baseline (k=0) | 0.4% | — | — | — |
+| dots 5 / 10 / 25 / 50 / 100 / 250 | 0.8 / 0.6 / 1.0 / 0.4 / 0.2 / 0.2% | ≤ +0.6 | ≤ 3 | ≤ 1 |
+| counting 5 / 10 / 25 / 50 | 0.8 / 0.6 / 0.6 / 0.4% | ≤ +0.4 | ≤ 2 | ≤ 1 |
+| alphabet 10 / 25 / 100 | 0.4 / 0.6 / 0.2% | ≤ +0.2 | ≤ 1 | ≤ 1 |
+
+For comparison the paper reports DeepSeek V3 31.1 → 61.0% and Kimi K2 18.4 → 36.4% on this task.
+Qwen2.5-7B is at floor without filler, so there is nothing for filler to lift: on the paper's task
+the null is a **capability floor**, not "capable but does not use the filler". Our own parity and
+order items, where direct has headroom (50–65%), show no uplift either (§3b), which is the informative
+part of the null.
 
 ## 4. Causal step corruption (`stego/corrupt.py`, `results/corrupt_qwen2.5-7b-bf16`)
 
