@@ -38,7 +38,7 @@ def _():
     # Per-item records and reduced residuals live beside this notebook in the repo. When the notebook
     # runs somewhere that has no checkout (a hosted sandbox), they are fetched from GitHub raw instead.
     DATA_URL = ("https://raw.githubusercontent.com/iamitiwari/"
-                "steganography-safety-alignment/main/notebooks/data/")
+                "steganography-filler-tokens-MATS-application/main/notebooks/data/")
     _cache = {}
 
     def load_bytes(name):
@@ -104,7 +104,7 @@ def _(mo):
     mo.md(r"""
     # Steganography-safety-alignment: project overview
 
-    **Model:** Qwen2.5-7B-Instruct (bf16). **Repo:** <https://github.com/iamitiwari/steganography-safety-alignment>.
+    **Model:** Qwen2.5-7B-Instruct (bf16). **Repo:** <https://github.com/iamitiwari/steganography-filler-tokens-MATS-application>.
     **Extends:** Brauer et al. 2026, *Reading Between the Dots* (filler tokens as a hidden reasoning channel).
 
     ## What this project asks
@@ -1546,7 +1546,7 @@ def _(mo):
     * `docs/FillerTokenSideQuest.md`: why this model does not use filler where the paper's models do.
     * `stego/tasks.py`, `stego/conditions.py`, `stego/corrupt.py`: the code ported into this notebook, with the rest of the families.
 
-    Repo: <https://github.com/iamitiwari/steganography-safety-alignment>
+    Repo: <https://github.com/iamitiwari/steganography-filler-tokens-MATS-application>
     """)
     return
 
